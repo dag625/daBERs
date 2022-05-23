@@ -9,6 +9,7 @@
 #include <functional>
 #include <concepts>
 #include <compare>
+#include <ostream>
 
 namespace dabers {
 
@@ -20,6 +21,7 @@ namespace dabers {
     };
 
     std::strong_ordering operator<=>(tag_class_type a, tag_class_type b) noexcept;
+    std::ostream& operator<<(std::ostream& os, tag_class_type t);
 
     struct tag {
         tag_class_type tag_class = tag_class_type::application;
@@ -29,6 +31,7 @@ namespace dabers {
 
     std::strong_ordering operator<=>(const tag& a, const tag& b) noexcept;
     bool operator==(const tag& a, const tag& b) noexcept;
+    std::ostream& operator<<(std::ostream& os, const tag& t);
 
     tag parse_tag(const std::byte*& begin, const std::byte* end);
 

@@ -7,6 +7,8 @@
 #include "exception.h"
 
 #include <doctest/doctest.h>
+#include <fmt/core.h>
+#include <fmt/ostream.h>
 
 #include <algorithm>
 #include <vector>
@@ -33,6 +35,17 @@ namespace dabers {
         return static_cast<uint8_t>(a) <=> static_cast<uint8_t>(b);
     }
 
+    std::ostream& operator<<(std::ostream& os, tag_class_type t) {
+        switch (t) {
+            case tag_class_type::universal: os << "Universal"; break;
+            case tag_class_type::context_specific: os << "Context Specific"; break;
+            case tag_class_type::application: os << "Application"; break;
+            case tag_class_type::private_class: os << "Private"; break;
+            default: os << "Unknown Tag Class (" << static_cast<int>(t) << ')'; break;
+        }
+        return os;
+    }
+
     std::strong_ordering operator<=>(const tag& a, const tag& b) noexcept {
         auto retval = a.tag_class <=> b.tag_class;
         if (retval == std::strong_ordering::equal) {
@@ -47,6 +60,14 @@ namespace dabers {
 
     bool operator==(const tag& a, const tag& b) noexcept {
         return (a <=> b) == std::strong_ordering::equal;
+    }
+
+    std::ostream& operator<<(std::ostream& os, const tag& t) {
+        fmt::print(os, "[{0}; {1}; {2} ({2:#x})]",
+                   t.tag_class,
+                   t.constructed ? "Constructed" : "Primitive",
+                   t.tag_number);
+        return os;
     }
 
     tag parse_tag(const std::byte*& begin, const std::byte* const end) {
@@ -98,6 +119,39 @@ namespace dabers {
 
         CHECK((test_parse_tag({0x1fu, 0x81u, 0x00u}) == tag{tag_class_type::universal, false, 128}));
         CHECK((test_parse_tag({0x1fu, 0x81u, 0x01u}) == tag{tag_class_type::universal, false, 129}));
+
+        CHECK((test_parse_tag({0x1fu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0x7fu}) == tag{tag_class_type::universal, false, 0x7fffffffffffffffu}));
+
+        //Check with buffer with extra data.
+        CHECK((test_parse_tag({0x1fu, 0x81u, 0x00u, 0x8au, 0x0bu, 0x8cu, 0x0du}) == tag{tag_class_type::universal, false, 128}));
+
+        std::vector<std::byte> buf;
+        buf.push_back(std::byte{0x9fu});
+        buf.push_back(std::byte{0x93u});
+        buf.push_back(std::byte{0x14u});
+        buf.push_back(std::byte{0x8au});
+        buf.push_back(std::byte{0x0bu});
+        buf.push_back(std::byte{0x8cu});
+        buf.push_back(std::byte{0x0du});
+        buf.push_back(std::byte{0x8eu});
+        buf.push_back(std::byte{0x0fu});
+        const std::byte *beg = buf.data(), *end = buf.data() + buf.size();
+        auto t = parse_tag(beg, end);
+        CHECK_EQ(t, tag{tag_class_type::context_specific, false, 0b001'0011'001'0100});
+        CHECK((*beg == std::byte{0x8au}));
+    }
+
+    TEST_CASE("parse_tag failures") {
+        //Empty buffer:
+        CHECK_THROWS_AS(test_parse_tag({}), exception);
+        //Long tag number implied, but not provided:
+        CHECK_THROWS_AS(test_parse_tag({0x1fu}), exception);
+        //Long tag number with no ending byte:
+        CHECK_THROWS_AS(test_parse_tag({0x1fu, 0x81u, 0x81u}), exception);
+        //Too long for library to support:
+        CHECK_THROWS_AS(test_parse_tag({0x1fu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0x7fu}), exception);
+        //Most significant byte has only zeroes:
+        CHECK_THROWS_AS(test_parse_tag({0x1fu, 0x80u, 0xffu, 0xffu, 0xffu, 0x7fu}), exception);
     }
 
     void write_tag(const tag& t, const std::function<void(std::byte)>& output) {
