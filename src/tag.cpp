@@ -28,6 +28,14 @@ namespace dabers {
             return parse_tag(beg, b.data() + b.size());
         }
 
+        bool test_write_tag(const tag& t, const std::vector<unsigned int>& exp) {
+            std::vector<std::byte> output;
+            write_tag(t, std::back_inserter(output));
+            return std::equal(output.begin(), output.end(),
+                              exp.begin(), exp.end(),
+                              [](std::byte a, unsigned int b){ return a == std::byte{static_cast<uint8_t>(b)}; });
+        }
+
     }
 
     std::strong_ordering operator<=>(tag_class_type a, tag_class_type b) noexcept {
@@ -96,6 +104,9 @@ namespace dabers {
                          "maximum supported by this library ({}).",
                          count, MAX_TAG_NUM_LENGTH);
             }
+            else if (num_bits < 31) {
+                throw_ex("The extended tag number cannot have a value less than 31 (0x1f).");
+            }
             num = num_bits;
         }
         return {cl, is_cons, num};
@@ -103,27 +114,26 @@ namespace dabers {
 
     TEST_CASE("parse_tag success") {
         for (uint8_t i = 0u; i < 31; ++i) {
-            CHECK((test_parse_tag({0x00u + i}) == tag{tag_class_type::universal, false, i}));
-            CHECK((test_parse_tag({0x40u + i}) == tag{tag_class_type::application, false, i}));
-            CHECK((test_parse_tag({0x80u + i}) == tag{tag_class_type::context_specific, false, i}));
-            CHECK((test_parse_tag({0xc0u + i}) == tag{tag_class_type::private_class, false, i}));
+            CHECK_EQ(test_parse_tag({0x00u + i}), tag{tag_class_type::universal, false, i});
+            CHECK_EQ(test_parse_tag({0x40u + i}), tag{tag_class_type::application, false, i});
+            CHECK_EQ(test_parse_tag({0x80u + i}), tag{tag_class_type::context_specific, false, i});
+            CHECK_EQ(test_parse_tag({0xc0u + i}), tag{tag_class_type::private_class, false, i});
 
-            CHECK((test_parse_tag({0x20u + i}) == tag{tag_class_type::universal, true, i}));
-            CHECK((test_parse_tag({0x60u + i}) == tag{tag_class_type::application, true, i}));
-            CHECK((test_parse_tag({0xa0u + i}) == tag{tag_class_type::context_specific, true, i}));
-            CHECK((test_parse_tag({0xe0u + i}) == tag{tag_class_type::private_class, true, i}));
+            CHECK_EQ(test_parse_tag({0x20u + i}), tag{tag_class_type::universal, true, i});
+            CHECK_EQ(test_parse_tag({0x60u + i}), tag{tag_class_type::application, true, i});
+            CHECK_EQ(test_parse_tag({0xa0u + i}), tag{tag_class_type::context_specific, true, i});
+            CHECK_EQ(test_parse_tag({0xe0u + i}), tag{tag_class_type::private_class, true, i});
         }
-        CHECK((test_parse_tag({0x1fu, 0x01u}) == tag{tag_class_type::universal, false, 1}));
-        CHECK((test_parse_tag({0x7fu, 0x1fu}) == tag{tag_class_type::application, true, 31}));
-        CHECK((test_parse_tag({0x9fu, 0x7fu}) == tag{tag_class_type::context_specific, false, 127}));
+        CHECK_EQ(test_parse_tag({0x7fu, 0x1fu}), tag{tag_class_type::application, true, 31});
+        CHECK_EQ(test_parse_tag({0x9fu, 0x7fu}), tag{tag_class_type::context_specific, false, 127});
 
-        CHECK((test_parse_tag({0x1fu, 0x81u, 0x00u}) == tag{tag_class_type::universal, false, 128}));
-        CHECK((test_parse_tag({0x1fu, 0x81u, 0x01u}) == tag{tag_class_type::universal, false, 129}));
+        CHECK_EQ(test_parse_tag({0x1fu, 0x81u, 0x00u}), tag{tag_class_type::universal, false, 128});
+        CHECK_EQ(test_parse_tag({0x1fu, 0x81u, 0x01u}), tag{tag_class_type::universal, false, 129});
 
-        CHECK((test_parse_tag({0x1fu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0x7fu}) == tag{tag_class_type::universal, false, 0x7fffffffffffffffu}));
+        CHECK_EQ(test_parse_tag({0x1fu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0x7fu}), tag{tag_class_type::universal, false, 0x7fffffffffffffffu});
 
         //Check with buffer with extra data.
-        CHECK((test_parse_tag({0x1fu, 0x81u, 0x00u, 0x8au, 0x0bu, 0x8cu, 0x0du}) == tag{tag_class_type::universal, false, 128}));
+        CHECK_EQ(test_parse_tag({0x1fu, 0x81u, 0x00u, 0x8au, 0x0bu, 0x8cu, 0x0du}), tag{tag_class_type::universal, false, 128});
 
         std::vector<std::byte> buf;
         buf.push_back(std::byte{0x9fu});
@@ -138,7 +148,7 @@ namespace dabers {
         const std::byte *beg = buf.data(), *end = buf.data() + buf.size();
         auto t = parse_tag(beg, end);
         CHECK_EQ(t, tag{tag_class_type::context_specific, false, 0b001'0011'001'0100});
-        CHECK((*beg == std::byte{0x8au}));
+        CHECK_EQ(*beg, std::byte{0x8au});
     }
 
     TEST_CASE("parse_tag failures") {
@@ -146,6 +156,9 @@ namespace dabers {
         CHECK_THROWS_AS(test_parse_tag({}), exception);
         //Long tag number implied, but not provided:
         CHECK_THROWS_AS(test_parse_tag({0x1fu}), exception);
+        //Long tag number with a number less than 31:
+        CHECK_THROWS_AS(test_parse_tag({0x1fu, 0x01u}), exception);
+        CHECK_THROWS_AS(test_parse_tag({0x1fu, 0x1eu}), exception);
         //Long tag number with no ending byte:
         CHECK_THROWS_AS(test_parse_tag({0x1fu, 0x81u, 0x81u}), exception);
         //Too long for library to support:
@@ -166,7 +179,7 @@ namespace dabers {
             bool found = false;
             while (mask != 0) {
                 if (found || t.tag_number & mask) {
-                    uint8_t val = num * 0x80u;
+                    uint8_t val = static_cast<bool>(num) * 0x80u;
                     val |= (t.tag_number & mask) >> (num * NSIZE);
                     output(std::byte{val});
                     found = true;
@@ -179,6 +192,27 @@ namespace dabers {
             first |= std::byte{static_cast<uint8_t>(t.tag_number)};
             output(first);
         }
+    }
+
+    TEST_CASE("write_tag success") {
+        for (uint8_t i = 0u; i < 31; ++i) {
+            CHECK(test_write_tag(tag{tag_class_type::universal, false, i}, {0x00u + i}));
+            CHECK(test_write_tag(tag{tag_class_type::application, false, i}, {0x40u + i}));
+            CHECK(test_write_tag(tag{tag_class_type::context_specific, false, i}, {0x80u + i}));
+            CHECK(test_write_tag(tag{tag_class_type::private_class, false, i}, {0xc0u + i}));
+
+            CHECK(test_write_tag(tag{tag_class_type::universal, true, i}, {0x20u + i}));
+            CHECK(test_write_tag(tag{tag_class_type::application, true, i}, {0x60u + i}));
+            CHECK(test_write_tag(tag{tag_class_type::context_specific, true, i}, {0xa0u + i}));
+            CHECK(test_write_tag(tag{tag_class_type::private_class, true, i}, {0xe0u + i}));
+        }
+        CHECK(test_write_tag(tag{tag_class_type::application, true, 31}, {0x7fu, 0x1fu}));
+        CHECK(test_write_tag(tag{tag_class_type::context_specific, false, 127}, {0x9fu, 0x7fu}));
+
+        CHECK(test_write_tag(tag{tag_class_type::universal, false, 128}, {0x1fu, 0x81u, 0x00u}));
+        CHECK(test_write_tag(tag{tag_class_type::universal, false, 129}, {0x1fu, 0x81u, 0x01u}));
+
+        CHECK(test_write_tag(tag{tag_class_type::universal, false, 0x7fffffffffffffffu}, {0x1fu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0xffu, 0x7fu}));
     }
 
 } /* namespace dabers */
